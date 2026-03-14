@@ -12,10 +12,10 @@ SERVICE="${SERVICE:-api}"
 
 case "$SERVICE" in
   api)
-    echo "[entrypoint] Starting API server..."
+    echo "[entrypoint] Starting API server on port ${PORT:-8000}..."
     exec uvicorn app.main:app \
       --host 0.0.0.0 \
-      --port 8000 \
+      --port "${PORT:-8000}" \
       --workers 2 \
       --log-level info
     ;;
