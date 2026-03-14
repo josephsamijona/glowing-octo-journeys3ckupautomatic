@@ -329,8 +329,9 @@ async function saveSchedule() {
 // ══════════════════════════════════════════════════════════════════════════════
 // Auth
 // ══════════════════════════════════════════════════════════════════════════════
-function logout() {
+async function logout() {
   localStorage.removeItem('id_token');
+  try { await fetch('/api/v1/auth/logout', { method: 'POST' }); } catch (_) {}
   window.location.href = '/login';
 }
 

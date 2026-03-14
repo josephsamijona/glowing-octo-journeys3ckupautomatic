@@ -8,6 +8,7 @@ import boto3
 import redis as redis_lib
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.api.deps import require_api_key, require_auth
@@ -56,7 +57,7 @@ class _LoginRequest(BaseModel):
 
 @router.post("/auth/login", tags=["auth"])
 def login(body: _LoginRequest):
-    """Exchange email/password for a Cognito IdToken."""
+    """Exchange email/password for Cognito tokens. Sets an httpOnly session cookie."""
     cognito = boto3.client("cognito-idp", region_name=settings.cognito_region)
     try:
         resp = cognito.initiate_auth(
@@ -67,16 +68,40 @@ def login(body: _LoginRequest):
         tokens = resp.get("AuthenticationResult", {})
         if not tokens:
             raise HTTPException(status_code=401, detail="Authentification échouée.")
-        return {
-            "id_token":      tokens["IdToken"],
+
+        id_token = tokens["IdToken"]
+
+        # Set httpOnly cookie so the server can guard the dashboard route.
+        # SameSite=Lax prevents CSRF while allowing normal navigation.
+        response = JSONResponse(content={
+            "id_token":      id_token,
             "access_token":  tokens["AccessToken"],
             "refresh_token": tokens.get("RefreshToken", ""),
-        }
+        })
+        response.set_cookie(
+            key="session_token",
+            value=id_token,
+            httponly=True,
+            secure=True,       # HTTPS only (Railway always uses HTTPS)
+            samesite="lax",
+            max_age=3600,      # 1 hour — matches Cognito IdToken expiry
+            path="/",
+        )
+        return response
+
     except ClientError as e:
         code = e.response["Error"]["Code"]
         if code in ("NotAuthorizedException", "UserNotFoundException"):
             raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect.")
         raise HTTPException(status_code=500, detail=f"Erreur Cognito: {code}")
+
+
+@router.post("/auth/logout", tags=["auth"])
+def logout():
+    """Clear the session cookie."""
+    response = JSONResponse(content={"ok": True})
+    response.delete_cookie(key="session_token", path="/")
+    return response
 
 
 # ---------------------------------------------------------------------------

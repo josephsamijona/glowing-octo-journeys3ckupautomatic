@@ -1,7 +1,7 @@
 """FastAPI application entry point."""
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -60,9 +60,19 @@ app.include_router(router, prefix="/api/v1")
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def dashboard(request: Request):
+    # Server-side guard: if no session cookie, redirect to login.
+    # The JS layer enforces the same check via localStorage for a smooth UX,
+    # but this prevents direct URL access to the dashboard without a cookie.
+    token = request.cookies.get("session_token")
+    if not token:
+        return RedirectResponse(url="/login", status_code=302)
     return templates.TemplateResponse("index.html", {"request": request})
 
 
 @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
-async def login(request: Request):
+async def login_page(request: Request):
+    # If already logged in (cookie present), go straight to dashboard
+    token = request.cookies.get("session_token")
+    if token:
+        return RedirectResponse(url="/", status_code=302)
     return templates.TemplateResponse("login.html", {"request": request})
