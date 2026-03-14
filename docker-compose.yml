@@ -1,0 +1,58 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────
+# S3 Backup Flow — JHBridge
+#
+# Services:
+#   api      → FastAPI HTTP server (port 8000)
+#   worker   → Celery worker (processes backup tasks)
+#   beat     → Celery Beat scheduler (9h / 21h UTC cron)
+#
+# Redis & all AWS resources are external (Railway / AWS).
+# ─────────────────────────────────────────────────────────────────────────
+
+x-app-base: &app-base
+  build: .
+  env_file: .env
+  restart: unless-stopped
+  depends_on: []   # no local Redis — it's on Railway
+
+services:
+
+  # ── FastAPI server ───────────────────────────────────────────────────
+  api:
+    <<: *app-base
+    container_name: s3bf-api
+    command: >
+      uvicorn app.main:app
+        --host 0.0.0.0
+        --port 8000
+        --workers 2
+        --log-level info
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Celery worker ────────────────────────────────────────────────────
+  worker:
+    <<: *app-base
+    container_name: s3bf-worker
+    command: >
+      celery -A app.worker.celery_app.celery_app worker
+        --loglevel=info
+        --concurrency=2
+        --max-tasks-per-child=50
+
+  # ── Celery Beat (cron scheduler) ─────────────────────────────────────
+  beat:
+    <<: *app-base
+    container_name: s3bf-beat
+    command: >
+      celery -A app.worker.celery_app.celery_app beat
+        --loglevel=info
+        --scheduler celery.beat.PersistentScheduler
+        --schedule /tmp/celerybeat-schedule

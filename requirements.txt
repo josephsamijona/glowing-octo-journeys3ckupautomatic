@@ -1,0 +1,26 @@
+# ── Core API ──────────────────────────────────────────────────────────────
+fastapi
+uvicorn[standard]
+python-dotenv
+pydantic[email]
+pydantic-settings
+jinja2
+aiofiles
+python-multipart
+
+# ── AWS SDK (S3, DynamoDB, Cognito) ───────────────────────────────────────
+boto3
+
+# ── Background Tasks & Cache ──────────────────────────────────────────────
+celery[redis]
+redis
+
+# ── Email Service ─────────────────────────────────────────────────────────
+resend
+
+# ── Authentication (JWT for Cognito) ──────────────────────────────────────
+python-jose[cryptography]
+passlib[bcrypt]
+
+# ── HTTP client (JWKS fetch) ──────────────────────────────────────────────
+httpx

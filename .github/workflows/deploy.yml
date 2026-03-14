@@ -1,0 +1,301 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# S3 Backup Flow — CI/CD Pipeline  |  JHBridge Translation Services
+#
+# Pipeline:  audit → build-scan-push → provision → deploy
+#            (all PRs)   (main only)   (main only)  (main only)
+#
+# Required GitHub Secrets
+# ────────────────────────
+# OIDC_ROLE_ARN                 ARN of the GitHub OIDC IAM role
+# AWS_ACCOUNT_ID                12-digit AWS account number
+# APP_SECRET_KEY                FastAPI SECRET_KEY (64-char hex)
+# DB_URL                        mysql:// or postgresql:// source DB
+# REDIS_URL                     Railway Redis URL
+# CELERY_BROKER_URL             Same as REDIS_URL or dedicated broker
+# COGNITO_USER_POOL_ID
+# COGNITO_APP_CLIENT_ID
+# EXTERNAL_BACKEND_SECRET_TOKEN
+# AWS_APP_ACCESS_KEY_ID         App runtime AWS key (NOT the CI/CD OIDC key)
+# AWS_APP_SECRET_ACCESS_KEY     App runtime AWS secret
+# DYNAMODBTABLE                 DynamoDB table name
+# S3_BUCKET_NAME                S3 backup bucket name
+# RESEND_API_KEY
+# EMAIL_FROM
+# ADMIN_EMAIL
+#
+# Required GitHub Variables  (Settings → Variables, not Secrets)
+# ───────────────────────────
+# AWS_REGION                    e.g. us-east-1
+# ALLOWED_ORIGINS               comma-separated CORS origins (or *)
+# ═══════════════════════════════════════════════════════════════════════════
+
+name: Build - Scan - Provision - Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION:     ${{ vars.AWS_REGION || 'us-east-1' }}
+  ECR_REPOSITORY: jhbridge/s3-backup-flow
+  ECS_CLUSTER:    jhbridge-backup
+
+jobs:
+
+# ─────────────────────────────────────────────────────────────────────────
+# 1. AUDIT — runs on every push / PR  (no AWS credentials needed)
+# ─────────────────────────────────────────────────────────────────────────
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install audit tools
+        run: pip install bandit pip-audit
+
+      - name: Bandit - Python SAST scan
+        run: |
+          bandit -r app/ \
+            --severity-level medium \
+            --confidence-level medium \
+            --exclude app/tests \
+            --format json \
+            --output bandit-report.json \
+            --exit-zero
+          bandit -r app/ \
+            --severity-level medium \
+            --confidence-level medium \
+            --exclude app/tests \
+            --quiet || true
+
+      - name: Upload Bandit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json
+
+      - name: pip-audit - dependency CVE check
+        run: pip-audit -r requirements.txt --strict
+
+# ─────────────────────────────────────────────────────────────────────────
+# 2. BUILD / SCAN / PUSH — main branch only
+# ─────────────────────────────────────────────────────────────────────────
+  build-scan-push:
+    name: Build and Push Image
+    runs-on: ubuntu-latest
+    needs: audit
+    if: github.ref == 'refs/heads/main'
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.OIDC_ROLE_ARN }}
+          aws-region:     ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        id: build-push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          cache-from: type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:buildcache
+          cache-to:   type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:buildcache,mode=max
+          provenance: true
+          sbom:       true
+
+      - name: Export image URI
+        id: meta
+        run: |
+          echo "image=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Trivy - container CVE scan
+        uses: aquasecurity/trivy-action@0.19.0
+        with:
+          image-ref:      ${{ steps.meta.outputs.image }}
+          format:         table
+          exit-code:      "1"
+          ignore-unfixed: true
+          severity:       CRITICAL,HIGH
+          timeout:        10m
+
+      - name: Trivy - export SARIF
+        if: always()
+        uses: aquasecurity/trivy-action@0.19.0
+        with:
+          image-ref: ${{ steps.meta.outputs.image }}
+          format:    sarif
+          output:    trivy-results.sarif
+          severity:  CRITICAL,HIGH,MEDIUM
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-sarif
+          path: trivy-results.sarif
+
+# ─────────────────────────────────────────────────────────────────────────
+# 3. PROVISION — idempotent AWS resource creation
+# ─────────────────────────────────────────────────────────────────────────
+  provision:
+    name: Provision AWS Infrastructure
+    runs-on: ubuntu-latest
+    needs: build-scan-push
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install provisioning dependencies
+        run: pip install boto3 python-dotenv
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.OIDC_ROLE_ARN }}
+          aws-region:     ${{ env.AWS_REGION }}
+
+      - name: Run infra provisioner
+        env:
+          AWS_ACCOUNT_ID:                ${{ secrets.AWS_ACCOUNT_ID }}
+          ECR_IMAGE:                     ${{ needs.build-scan-push.outputs.image }}
+          ECS_CLUSTER:                   ${{ env.ECS_CLUSTER }}
+          APP_ENV:                       production
+          SECRET_KEY:                    ${{ secrets.APP_SECRET_KEY }}
+          DB_URL:                        ${{ secrets.DB_URL }}
+          REDIS_URL:                     ${{ secrets.REDIS_URL }}
+          CELERY_BROKER_URL:             ${{ secrets.CELERY_BROKER_URL }}
+          COGNITO_USER_POOL_ID:          ${{ secrets.COGNITO_USER_POOL_ID }}
+          COGNITO_APP_CLIENT_ID:         ${{ secrets.COGNITO_APP_CLIENT_ID }}
+          COGNITO_REGION:                ${{ env.AWS_REGION }}
+          EXTERNAL_BACKEND_SECRET_TOKEN: ${{ secrets.EXTERNAL_BACKEND_SECRET_TOKEN }}
+          AWS_ACCESS_KEY_ID:             ${{ secrets.AWS_APP_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY:         ${{ secrets.AWS_APP_SECRET_ACCESS_KEY }}
+          DYNAMODBTABLE:                 ${{ secrets.DYNAMODBTABLE }}
+          S3_BUCKET_NAME:                ${{ secrets.S3_BUCKET_NAME }}
+          RESEND_API_KEY:                ${{ secrets.RESEND_API_KEY }}
+          EMAIL_FROM:                    ${{ secrets.EMAIL_FROM }}
+          ADMIN_EMAIL:                   ${{ secrets.ADMIN_EMAIL }}
+          ALLOWED_ORIGINS:               ${{ vars.ALLOWED_ORIGINS || '*' }}
+        run: python infra/provision_ecs.py
+
+# ─────────────────────────────────────────────────────────────────────────
+# 4. DEPLOY — rolling ECS update for all 3 services
+# ─────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to ECS Fargate
+    runs-on: ubuntu-latest
+    needs: [build-scan-push, provision]
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.OIDC_ROLE_ARN }}
+          aws-region:     ${{ env.AWS_REGION }}
+
+      - name: Rolling deploy - update image in all services
+        env:
+          IMAGE_URI: ${{ needs.build-scan-push.outputs.image }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SERVICES=(
+            "jhbridge-s3-backup-api"
+            "jhbridge-s3-backup-worker"
+            "jhbridge-s3-backup-beat"
+          )
+
+          for SVC in "${SERVICES[@]}"; do
+            echo "Deploying: $SVC"
+
+            TASK_DEF_ARN=$(aws ecs describe-services \
+              --cluster "$ECS_CLUSTER" \
+              --services "$SVC" \
+              --query "services[0].taskDefinition" \
+              --output text 2>/dev/null || echo "")
+
+            if [[ -z "$TASK_DEF_ARN" || "$TASK_DEF_ARN" == "None" ]]; then
+              echo "  WARNING: $SVC not found, skipping"
+              continue
+            fi
+
+            NEW_TD=$(aws ecs describe-task-definition \
+              --task-definition "$TASK_DEF_ARN" \
+              --query taskDefinition \
+              --output json | \
+              jq --arg img "$IMAGE_URI" \
+                'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy,.placementConstraints) | .containerDefinitions[0].image = $img')
+
+            NEW_REV=$(aws ecs register-task-definition \
+              --cli-input-json "$NEW_TD" \
+              --query "taskDefinition.revision" \
+              --output text)
+
+            FAMILY=$(echo "$TASK_DEF_ARN" | awk -F/ '{print $NF}' | cut -d: -f1)
+
+            aws ecs update-service \
+              --cluster "$ECS_CLUSTER" \
+              --service "$SVC" \
+              --task-definition "${FAMILY}:${NEW_REV}" \
+              --force-new-deployment \
+              --no-cli-pager > /dev/null
+
+            echo "  OK: ${FAMILY}:${NEW_REV}"
+          done
+
+      - name: Wait for services to stabilize
+        shell: bash
+        run: |
+          set -euo pipefail
+          for SVC in jhbridge-s3-backup-api jhbridge-s3-backup-worker jhbridge-s3-backup-beat; do
+            echo "Waiting for $SVC..."
+            aws ecs wait services-stable \
+              --cluster "$ECS_CLUSTER" \
+              --services "$SVC" \
+            && echo "  OK: $SVC stable" \
+            || echo "  WARN: $SVC timed out, check ECS console"
+          done
+
+      - name: Deployment summary
+        run: |
+          echo "Deploy complete"
+          echo "Image   : ${{ needs.build-scan-push.outputs.image }}"
+          echo "Cluster : ${{ env.ECS_CLUSTER }}"
+          echo "Region  : ${{ env.AWS_REGION }}"
+          echo "Commit  : ${{ github.sha }}"

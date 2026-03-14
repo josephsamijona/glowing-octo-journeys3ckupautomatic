@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>S3 Backup Flow — JHBridge</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            navy:   '#1A365D',
+            'navy-light': '#2A4A7F',
+            green:  '#68D391',
+            'green-dark': '#48BB78',
+            yellow: '#FEFCBF',
+            bg:     '#F7FAFC',
+          },
+          fontFamily: { sans: ['Inter', 'Roboto', 'sans-serif'] },
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    body { background: #F7FAFC; font-family: 'Inter', sans-serif; }
+
+    /* SVG progress circle */
+    .circle-bg { fill: none; stroke: #E2E8F0; }
+    .circle-fill {
+      fill: none;
+      stroke: #68D391;
+      stroke-linecap: round;
+      transition: stroke-dashoffset 0.6s ease;
+      transform: rotate(-90deg);
+      transform-origin: 50% 50%;
+    }
+
+    /* Pulse animation for RUNNING state */
+    @keyframes pulse-border {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(104,211,145,.4); }
+      50%       { box-shadow: 0 0 0 8px rgba(104,211,145,0); }
+    }
+    .pulse { animation: pulse-border 2s infinite; }
+
+    /* Status badges */
+    .badge-COMPLETED { background:#C6F6D5; color:#22543D; }
+    .badge-FAILED    { background:#FED7D7; color:#742A2A; }
+    .badge-RUNNING   { background:#BEE3F8; color:#2A4365; }
+    .badge-PENDING   { background:#FEFCBF; color:#744210; }
+  </style>
+</head>
+<body class="min-h-screen">
+
+<!-- ═══════════════════════════════════════════════════════ NAV ══ -->
+<nav class="bg-navy shadow-lg">
+  <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <!-- Logo mark -->
+      <div class="w-9 h-9 rounded-lg bg-green flex items-center justify-center">
+        <svg class="w-5 h-5 text-navy" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M5.5 3A2.5 2.5 0 003 5.5v.793c.026.009.051.02.076.032L8 8.94l4.925-2.617A2.5 2.5 0 0110.5 3h-5z"/>
+          <path d="M8.75 9.866L3 7.102V12.5A2.5 2.5 0 005.5 15h5a2.5 2.5 0 002.5-2.5V7.101l-4.25 2.765zM17 6.5A2.5 2.5 0 0014.5 4H12a2.5 2.5 0 00-2.324 1.578L14 7.806V12.5a4.5 4.5 0 01-.09.876A2.5 2.5 0 0017 11V6.5z"/>
+        </svg>
+      </div>
+      <div>
+        <p class="text-white font-bold text-lg leading-tight">JHBridge</p>
+        <p class="text-green text-xs font-medium tracking-wide">One Platform · Backup Flow</p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-4">
+      <span id="nav-status" class="text-green text-sm font-medium hidden">● System Online</span>
+      <button onclick="logout()"
+        class="text-white/70 hover:text-white text-sm border border-white/20 rounded-lg px-4 py-1.5 transition">
+        Sign Out
+      </button>
+    </div>
+  </div>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════ MAIN ══ -->
+<main class="max-w-7xl mx-auto px-6 py-8 space-y-8">
+
+  <!-- ── STATS ROW ──────────────────────────────────────────── -->
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+    <div class="bg-white rounded-xl shadow-sm p-5 flex items-center gap-4">
+      <div class="w-12 h-12 rounded-lg bg-green/20 flex items-center justify-center">
+        <svg class="w-6 h-6 text-green-dark" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+      </div>
+      <div>
+        <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Last Backup</p>
+        <p id="stat-last" class="text-navy font-bold text-sm mt-0.5">—</p>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm p-5 flex items-center gap-4">
+      <div class="w-12 h-12 rounded-lg bg-blue-50 flex items-center justify-center">
+        <svg class="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+        </svg>
+      </div>
+      <div>
+        <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Total Storage</p>
+        <p id="stat-storage" class="text-navy font-bold text-sm mt-0.5">—</p>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm p-5 flex items-center gap-4">
+      <div class="w-12 h-12 rounded-lg bg-yellow/60 flex items-center justify-center">
+        <svg class="w-6 h-6 text-yellow-700" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+      </div>
+      <div>
+        <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Next Schedule</p>
+        <p id="stat-next" class="text-navy font-bold text-sm mt-0.5">—</p>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm p-5 flex items-center gap-4">
+      <div class="w-12 h-12 rounded-lg bg-navy/10 flex items-center justify-center">
+        <svg class="w-6 h-6 text-navy" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/>
+        </svg>
+      </div>
+      <div>
+        <p class="text-xs text-gray-500 font-medium uppercase tracking-wide">Total Backups</p>
+        <p id="stat-count" class="text-navy font-bold text-sm mt-0.5">—</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── MAIN CONTENT (2 columns) ──────────────────────────── -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+    <!-- LEFT: Progress + Manual Trigger -->
+    <div class="lg:col-span-2 space-y-6">
+
+      <!-- Progress Card -->
+      <div class="bg-white rounded-xl shadow-sm p-6">
+        <div class="flex items-center justify-between mb-6">
+          <h2 class="text-navy font-semibold text-base">Live Backup Progress</h2>
+          <span id="progress-badge"
+            class="text-xs font-semibold px-3 py-1 rounded-full bg-gray-100 text-gray-500">
+            IDLE
+          </span>
+        </div>
+
+        <div class="flex flex-col items-center gap-6">
+          <!-- SVG Circle -->
+          <div class="relative" style="width:180px;height:180px">
+            <svg viewBox="0 0 120 120" width="180" height="180">
+              <circle class="circle-bg" cx="60" cy="60" r="50" stroke-width="10"/>
+              <circle id="progress-circle" class="circle-fill" cx="60" cy="60" r="50"
+                stroke-width="10"
+                stroke-dasharray="314"
+                stroke-dashoffset="314"/>
+            </svg>
+            <div class="absolute inset-0 flex flex-col items-center justify-center">
+              <span id="progress-pct" class="text-navy font-bold text-3xl">0%</span>
+              <span id="progress-phase" class="text-gray-400 text-xs mt-1 text-center px-2">En attente...</span>
+            </div>
+          </div>
+
+          <!-- Trigger Button -->
+          <button id="btn-trigger"
+            onclick="triggerBackup()"
+            class="w-full sm:w-auto px-8 py-3 bg-navy hover:bg-navy-light text-white font-semibold rounded-xl transition-all shadow-sm active:scale-95">
+            Lancer un Backup Maintenant
+          </button>
+
+          <!-- Confirm dialog (hidden by default) -->
+          <div id="confirm-dialog" class="hidden w-full p-4 bg-yellow rounded-lg text-sm text-yellow-800 text-center">
+            <p class="font-semibold mb-3">Confirmer le lancement d'un backup manuel ?</p>
+            <div class="flex gap-3 justify-center">
+              <button onclick="confirmBackup()"
+                class="px-5 py-2 bg-navy text-white rounded-lg font-medium text-sm">
+                Confirmer
+              </button>
+              <button onclick="cancelBackup()"
+                class="px-5 py-2 bg-white text-navy border border-navy rounded-lg font-medium text-sm">
+                Annuler
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- History Table -->
+      <div class="bg-white rounded-xl shadow-sm p-6">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-navy font-semibold text-base">Historique des Backups</h2>
+          <button onclick="loadHistory()"
+            class="text-xs text-green-dark hover:text-green font-medium flex items-center gap-1">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
+            Rafraîchir
+          </button>
+        </div>
+
+        <div class="overflow-x-auto -mx-2">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-gray-100">
+                <th class="text-left py-2 px-2 text-xs font-semibold text-gray-400 uppercase tracking-wide">ID</th>
+                <th class="text-left py-2 px-2 text-xs font-semibold text-gray-400 uppercase tracking-wide">Statut</th>
+                <th class="text-left py-2 px-2 text-xs font-semibold text-gray-400 uppercase tracking-wide">Déclenché par</th>
+                <th class="text-left py-2 px-2 text-xs font-semibold text-gray-400 uppercase tracking-wide">Date</th>
+                <th class="text-left py-2 px-2 text-xs font-semibold text-gray-400 uppercase tracking-wide">Durée</th>
+                <th class="py-2 px-2"></th>
+              </tr>
+            </thead>
+            <tbody id="history-body">
+              <tr>
+                <td colspan="6" class="text-center py-10 text-gray-400 text-sm">
+                  Chargement...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Schedule + API Info -->
+    <div class="space-y-6">
+
+      <!-- Schedule Card -->
+      <div class="bg-white rounded-xl shadow-sm p-6">
+        <h2 class="text-navy font-semibold text-base mb-5">Planification des Backups</h2>
+
+        <div class="space-y-4">
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wide">
+              Backup Matin
+            </label>
+            <div class="flex gap-2">
+              <input id="morning-hour" type="number" min="0" max="23" value="9"
+                class="w-16 border border-gray-200 rounded-lg px-3 py-2 text-sm text-navy font-semibold text-center focus:ring-2 focus:ring-green/50 focus:border-green outline-none" />
+              <span class="text-gray-400 self-center font-bold">:</span>
+              <input id="morning-min" type="number" min="0" max="59" value="0"
+                class="w-16 border border-gray-200 rounded-lg px-3 py-2 text-sm text-navy font-semibold text-center focus:ring-2 focus:ring-green/50 focus:border-green outline-none" />
+              <span class="text-gray-400 self-center text-xs">UTC</span>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wide">
+              Backup Soir
+            </label>
+            <div class="flex gap-2">
+              <input id="evening-hour" type="number" min="0" max="23" value="21"
+                class="w-16 border border-gray-200 rounded-lg px-3 py-2 text-sm text-navy font-semibold text-center focus:ring-2 focus:ring-green/50 focus:border-green outline-none" />
+              <span class="text-gray-400 self-center font-bold">:</span>
+              <input id="evening-min" type="number" min="0" max="59" value="0"
+                class="w-16 border border-gray-200 rounded-lg px-3 py-2 text-sm text-navy font-semibold text-center focus:ring-2 focus:ring-green/50 focus:border-green outline-none" />
+              <span class="text-gray-400 self-center text-xs">UTC</span>
+            </div>
+          </div>
+
+          <button onclick="saveSchedule()"
+            class="w-full py-2.5 bg-green hover:bg-green-dark text-navy font-semibold rounded-lg text-sm transition-all active:scale-95">
+            Enregistrer le planning
+          </button>
+
+          <div id="schedule-msg" class="hidden text-xs text-center text-green-dark font-medium py-1">
+            Planning mis à jour avec succès.
+          </div>
+        </div>
+      </div>
+
+      <!-- API Info Card -->
+      <div class="bg-navy rounded-xl shadow-sm p-6 text-white">
+        <h2 class="font-semibold text-base mb-4 text-green">API Externe</h2>
+        <p class="text-white/70 text-xs mb-4 leading-relaxed">
+          Déclenchez un backup depuis votre backend Django ou FastAPI
+          avec le token secret configuré dans votre <code class="text-green">.env</code>.
+        </p>
+
+        <div class="space-y-3 text-xs font-mono">
+          <div class="bg-white/10 rounded-lg p-3">
+            <p class="text-green mb-1">POST</p>
+            <p class="text-white/80 break-all">/api/v1/external/trigger</p>
+          </div>
+          <div class="bg-white/10 rounded-lg p-3">
+            <p class="text-green mb-1">GET</p>
+            <p class="text-white/80 break-all">/api/v1/external/status/{"{task_id}"}</p>
+          </div>
+          <div class="bg-white/10 rounded-lg p-3">
+            <p class="text-yellow text-xs mb-1">Header requis</p>
+            <p class="text-white/80">X-API-KEY: &lt;token&gt;</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Health Card -->
+      <div class="bg-white rounded-xl shadow-sm p-6">
+        <h2 class="text-navy font-semibold text-base mb-4">Santé du Système</h2>
+        <div class="space-y-2.5 text-sm" id="health-list">
+          <div class="flex justify-between">
+            <span class="text-gray-500">Redis</span>
+            <span id="health-redis" class="font-medium">—</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-500">DynamoDB</span>
+            <span id="health-dynamo" class="font-medium">—</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-500">S3 Bucket</span>
+            <span id="health-s3" class="font-medium">—</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- ═════════════════════════════════════════════ TOAST ══ -->
+<div id="toast"
+  class="fixed bottom-6 right-6 hidden z-50 flex items-center gap-3 px-5 py-3.5 rounded-xl shadow-xl text-sm font-medium"
+  style="min-width:260px">
+</div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>

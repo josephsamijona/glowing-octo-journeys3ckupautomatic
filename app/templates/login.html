@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign In — JHBridge Backup</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            navy: '#1A365D',
+            'navy-light': '#2A4A7F',
+            green: '#68D391',
+            bg: '#F7FAFC',
+          },
+          fontFamily: { sans: ['Inter', 'Roboto', 'sans-serif'] },
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+</head>
+<body class="min-h-screen bg-bg flex items-center justify-center font-sans px-4">
+
+  <div class="w-full max-w-md">
+    <!-- Logo -->
+    <div class="text-center mb-8">
+      <div class="w-16 h-16 rounded-2xl bg-navy flex items-center justify-center mx-auto mb-4 shadow-lg">
+        <div class="w-9 h-9 rounded-lg bg-green flex items-center justify-center">
+          <svg class="w-5 h-5 text-navy" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M5.5 3A2.5 2.5 0 003 5.5v.793c.026.009.051.02.076.032L8 8.94l4.925-2.617A2.5 2.5 0 0010.5 3h-5z"/>
+            <path d="M8.75 9.866L3 7.102V12.5A2.5 2.5 0 005.5 15h5a2.5 2.5 0 002.5-2.5V7.101l-4.25 2.765zM17 6.5A2.5 2.5 0 0014.5 4H12a2.5 2.5 0 00-2.324 1.578L14 7.806V12.5a4.5 4.5 0 01-.09.876A2.5 2.5 0 0017 11V6.5z"/>
+          </svg>
+        </div>
+      </div>
+      <h1 class="text-navy font-bold text-2xl">JHBridge</h1>
+      <p class="text-green font-medium text-sm mt-1">Backup Flow — Administration</p>
+    </div>
+
+    <!-- Card -->
+    <div class="bg-white rounded-2xl shadow-sm p-8">
+      <h2 class="text-navy font-semibold text-lg mb-6">Connexion administrateur</h2>
+
+      <div id="error-msg" class="hidden mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm"></div>
+
+      <form id="login-form" class="space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wide">
+            Email
+          </label>
+          <input type="email" id="email" required
+            placeholder="admin@jhbridgetranslation.com"
+            class="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm text-navy focus:ring-2 focus:ring-green/50 focus:border-green outline-none transition" />
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wide">
+            Mot de passe
+          </label>
+          <input type="password" id="password" required
+            placeholder="••••••••"
+            class="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm text-navy focus:ring-2 focus:ring-green/50 focus:border-green outline-none transition" />
+        </div>
+
+        <button type="submit"
+          class="w-full py-3 bg-navy hover:bg-navy-light text-white font-semibold rounded-xl transition-all active:scale-95 shadow-sm mt-2">
+          Se connecter
+        </button>
+      </form>
+    </div>
+
+    <p class="text-center text-gray-400 text-xs mt-6">
+      JHBridge Translation Services &mdash; Backup Administration
+    </p>
+  </div>
+
+  <script>
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      const errEl = document.getElementById('error-msg');
+      errEl.classList.add('hidden');
+
+      try {
+        // Cognito USER_PASSWORD_AUTH via a lightweight proxy endpoint
+        const resp = await fetch('/api/v1/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || 'Échec de la connexion.');
+        localStorage.setItem('id_token', data.id_token);
+        window.location.href = '/';
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.classList.remove('hidden');
+      }
+    });
+
+    // If already logged in, redirect
+    if (localStorage.getItem('id_token')) {
+      window.location.href = '/';
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,39 @@
+# ─── Python virtualenv (largest exclusion — can be 200+ MB) ──────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ─── Git / CI ─────────────────────────────────────────────────────────────
+.git/
+.gitignore
+.github/
+
+# ─── Secrets — never bake into the image ─────────────────────────────────
+.env
+*.env
+
+# ─── Python bytecode ──────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ─── Dev / infra scripts (not needed in runtime image) ────────────────────
+infra/
+scripts/
+*.md
+
+# ─── OS / IDE ─────────────────────────────────────────────────────────────
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# ─── Build artefacts ──────────────────────────────────────────────────────
+dist/
+build/
+*.egg-info/
