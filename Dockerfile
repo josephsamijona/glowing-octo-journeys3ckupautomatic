@@ -26,9 +26,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt .
 
-# Build wheels into /wheels — these pre-compiled artefacts are then
-# installed in the runtime stage with no compiler needed there.
-RUN pip wheel --no-deps --wheel-dir /wheels -r requirements.txt
+# Build wheels for ALL packages (direct + transitive deps) into /wheels.
+# --no-deps would skip transitive deps like botocore, causing install failure.
+RUN pip wheel --wheel-dir /wheels -r requirements.txt
 
 
 # ── Stage 2: runtime image ────────────────────────────────────────────────
@@ -43,10 +43,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install OS-level database clients (mysqldump + pg_dump) and curl (healthcheck)
-# Merge into a single RUN layer and scrub apt lists immediately to save space.
+# Install OS-level tools:
+#   - postgresql-client  → pg_dump for PostgreSQL backups
+#   - curl               → container healthcheck
+# MySQL backups use PyMySQL (pure Python) — no default-mysql-client needed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        default-mysql-client \
         postgresql-client \
         curl \
     && apt-get clean \
