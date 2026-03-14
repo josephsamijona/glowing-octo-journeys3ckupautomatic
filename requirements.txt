@@ -1,26 +1,29 @@
 # ── Core API ──────────────────────────────────────────────────────────────
-fastapi
-uvicorn[standard]
-python-dotenv
-pydantic[email]
-pydantic-settings
-jinja2
-aiofiles
-python-multipart
+fastapi==0.135.1
+uvicorn[standard]==0.41.0
+python-dotenv==1.2.2
+pydantic[email]==2.12.5
+pydantic-settings==2.13.1
+jinja2==3.1.6
+aiofiles==25.1.0
+python-multipart==0.0.22
 
 # ── AWS SDK (S3, DynamoDB, Cognito) ───────────────────────────────────────
-boto3
+boto3==1.42.68
 
 # ── Background Tasks & Cache ──────────────────────────────────────────────
-celery[redis]
-redis
+celery[redis]==5.6.2
+redis==6.4.0
 
 # ── Email Service ─────────────────────────────────────────────────────────
-resend
+resend==2.23.0
 
 # ── Authentication (JWT for Cognito) ──────────────────────────────────────
-python-jose[cryptography]
-passlib[bcrypt]
+python-jose[cryptography]==3.5.0
+passlib[bcrypt]==1.7.4
 
 # ── HTTP client (JWKS fetch) ──────────────────────────────────────────────
-httpx
+httpx==0.28.1
+
+# ── Pure-Python DB drivers (no native binary required) ────────────────────
+PyMySQL==1.1.1

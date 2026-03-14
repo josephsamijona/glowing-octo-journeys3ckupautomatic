@@ -137,9 +137,11 @@ def send_backup_report(
             err_block=err_block,
         )
 
+        recipients = [e.strip() for e in to_email.split(",") if e.strip()]
+
         resend.Emails.send({
             "from": settings.email_from,
-            "to": [to_email],
+            "to": recipients,
             "subject": (
                 f"[JHBridge Backup] {status_label} - {subject_date} UTC"
             ),

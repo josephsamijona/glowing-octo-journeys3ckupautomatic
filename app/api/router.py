@@ -4,8 +4,11 @@ import json
 import logging
 import uuid
 
+import boto3
 import redis as redis_lib
+from botocore.exceptions import ClientError
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 
 from app.api.deps import require_api_key, require_auth
 from app.api.schemas import (
@@ -40,6 +43,40 @@ def _valid_task_id(task_id: str) -> bool:
 
 def _get_redis() -> redis_lib.Redis:
     return redis_lib.from_url(settings.redis_url, decode_responses=True)
+
+
+# ---------------------------------------------------------------------------
+# Auth — Cognito login proxy (public)
+# ---------------------------------------------------------------------------
+
+class _LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+@router.post("/auth/login", tags=["auth"])
+def login(body: _LoginRequest):
+    """Exchange email/password for a Cognito IdToken."""
+    cognito = boto3.client("cognito-idp", region_name=settings.cognito_region)
+    try:
+        resp = cognito.initiate_auth(
+            AuthFlow="USER_PASSWORD_AUTH",
+            AuthParameters={"USERNAME": body.email, "PASSWORD": body.password},
+            ClientId=settings.cognito_app_client_id,
+        )
+        tokens = resp.get("AuthenticationResult", {})
+        if not tokens:
+            raise HTTPException(status_code=401, detail="Authentification échouée.")
+        return {
+            "id_token":      tokens["IdToken"],
+            "access_token":  tokens["AccessToken"],
+            "refresh_token": tokens.get("RefreshToken", ""),
+        }
+    except ClientError as e:
+        code = e.response["Error"]["Code"]
+        if code in ("NotAuthorizedException", "UserNotFoundException"):
+            raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect.")
+        raise HTTPException(status_code=500, detail=f"Erreur Cognito: {code}")
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +306,10 @@ async def ws_backup_progress(websocket: WebSocket, task_id: str):
     except Exception:
         pass
     finally:
-        await websocket.close()
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass  # already closed by client disconnect
 
 
 # ---------------------------------------------------------------------------

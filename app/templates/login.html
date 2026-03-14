@@ -65,9 +65,13 @@
             class="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm text-navy focus:ring-2 focus:ring-green/50 focus:border-green outline-none transition" />
         </div>
 
-        <button type="submit"
-          class="w-full py-3 bg-navy hover:bg-navy-light text-white font-semibold rounded-xl transition-all active:scale-95 shadow-sm mt-2">
-          Se connecter
+        <button type="submit" id="btn-login"
+          class="w-full py-3 bg-navy hover:bg-navy-light text-white font-semibold rounded-xl transition-all active:scale-95 shadow-sm mt-2 flex items-center justify-center gap-2 disabled:opacity-60">
+          <svg id="btn-spinner" class="hidden animate-spin w-4 h-4 text-white" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+          </svg>
+          <span id="btn-label">Se connecter</span>
         </button>
       </form>
     </div>
@@ -80,13 +84,21 @@
   <script>
     document.getElementById('login-form').addEventListener('submit', async (e) => {
       e.preventDefault();
-      const email = document.getElementById('email').value;
+      const email    = document.getElementById('email').value;
       const password = document.getElementById('password').value;
-      const errEl = document.getElementById('error-msg');
+      const errEl    = document.getElementById('error-msg');
+      const btn      = document.getElementById('btn-login');
+      const spinner  = document.getElementById('btn-spinner');
+      const label    = document.getElementById('btn-label');
+
       errEl.classList.add('hidden');
 
+      // Loading state
+      btn.disabled = true;
+      spinner.classList.remove('hidden');
+      label.textContent = 'Connexion…';
+
       try {
-        // Cognito USER_PASSWORD_AUTH via a lightweight proxy endpoint
         const resp = await fetch('/api/v1/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -95,14 +107,17 @@
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.detail || 'Échec de la connexion.');
         localStorage.setItem('id_token', data.id_token);
+        label.textContent = 'Redirection…';
         window.location.href = '/';
       } catch (err) {
         errEl.textContent = err.message;
         errEl.classList.remove('hidden');
+        btn.disabled = false;
+        spinner.classList.add('hidden');
+        label.textContent = 'Se connecter';
       }
     });
 
-    // If already logged in, redirect
     if (localStorage.getItem('id_token')) {
       window.location.href = '/';
     }

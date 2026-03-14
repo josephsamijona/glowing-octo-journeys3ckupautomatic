@@ -1,5 +1,6 @@
 """DynamoDB CRUD for BackupTasks tracking."""
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -40,7 +41,8 @@ def _mask_db_url(db_url: str) -> str:
 def create_task(task_id: str, triggered_by: str, db_url: str = "") -> dict:
     table = _get_table()
     item = {
-        "task_id": task_id,
+        "TaskId": task_id,      # partition key — must match table schema
+        "task_id": task_id,     # duplicate for backward-compat reads
         "status": "PENDING",
         "progress": 0,
         "s3_url": "",
@@ -67,6 +69,9 @@ def update_task(task_id: str, **fields) -> dict:
     expr_values: dict = {}
 
     for k, v in fields.items():
+        # DynamoDB rejects Python float — convert to Decimal
+        if isinstance(v, float):
+            v = Decimal(str(round(v, 4)))
         placeholder = f"#f_{k}"
         value_key = f":v_{k}"
         set_parts.append(f"{placeholder} = {value_key}")
@@ -74,7 +79,7 @@ def update_task(task_id: str, **fields) -> dict:
         expr_values[value_key] = v
 
     response = table.update_item(
-        Key={"task_id": task_id},
+        Key={"TaskId": task_id},
         UpdateExpression="SET " + ", ".join(set_parts),
         ExpressionAttributeNames=expr_names,
         ExpressionAttributeValues=expr_values,
@@ -89,7 +94,7 @@ def update_task(task_id: str, **fields) -> dict:
 
 def get_task(task_id: str) -> Optional[dict]:
     table = _get_table()
-    response = table.get_item(Key={"task_id": task_id})
+    response = table.get_item(Key={"TaskId": task_id})
     return response.get("Item")
 
 

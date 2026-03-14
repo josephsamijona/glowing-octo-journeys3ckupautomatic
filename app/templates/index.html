@@ -152,8 +152,8 @@
         </div>
 
         <div class="flex flex-col items-center gap-6">
-          <!-- SVG Circle -->
-          <div class="relative" style="width:180px;height:180px">
+          <!-- SVG Circle — id="progress-ring" receives .pulse class when RUNNING -->
+          <div id="progress-ring" class="relative rounded-full" style="width:180px;height:180px">
             <svg viewBox="0 0 120 120" width="180" height="180">
               <circle class="circle-bg" cx="60" cy="60" r="50" stroke-width="10"/>
               <circle id="progress-circle" class="circle-fill" cx="60" cy="60" r="50"
@@ -167,12 +167,28 @@
             </div>
           </div>
 
+          <!-- Error message shown on FAILED -->
+          <div id="progress-error"
+            class="hidden w-full px-4 py-2.5 bg-red-50 border border-red-200 rounded-lg text-red-700 text-xs text-center">
+          </div>
+
           <!-- Trigger Button -->
           <button id="btn-trigger"
             onclick="triggerBackup()"
             class="w-full sm:w-auto px-8 py-3 bg-navy hover:bg-navy-light text-white font-semibold rounded-xl transition-all shadow-sm active:scale-95">
             Lancer un Backup Maintenant
           </button>
+
+          <!-- Loading indicator while waiting for worker / WS connect -->
+          <div id="btn-trigger-loading"
+            class="hidden flex items-center gap-3 text-sm text-gray-500 font-medium">
+            <svg class="animate-spin w-4 h-4 text-navy" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+              <path class="opacity-75" fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+            </svg>
+            Connexion au worker…
+          </div>
 
           <!-- Confirm dialog (hidden by default) -->
           <div id="confirm-dialog" class="hidden w-full p-4 bg-yellow rounded-lg text-sm text-yellow-800 text-center">

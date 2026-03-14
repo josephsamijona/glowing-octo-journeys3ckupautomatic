@@ -292,10 +292,54 @@ jobs:
             || echo "  WARN: $SVC timed out, check ECS console"
           done
 
-      - name: Deployment summary
+      - name: CloudFront cache invalidation
+        shell: bash
         run: |
+          set -euo pipefail
+
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names "jhbridge-backup-alb" \
+            --query "LoadBalancers[0].DNSName" \
+            --output text 2>/dev/null || echo "")
+
+          if [[ -z "$ALB_DNS" || "$ALB_DNS" == "None" ]]; then
+            echo "ALB not found — skipping CloudFront invalidation"
+            exit 0
+          fi
+
+          DIST_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Origins.Items[0].DomainName=='${ALB_DNS}'].Id | [0]" \
+            --output text 2>/dev/null || echo "")
+
+          if [[ -z "$DIST_ID" || "$DIST_ID" == "None" ]]; then
+            echo "CloudFront distribution not found — skipping invalidation"
+            exit 0
+          fi
+
+          echo "Invalidating CloudFront distribution: $DIST_ID"
+          aws cloudfront create-invalidation \
+            --distribution-id "$DIST_ID" \
+            --paths "/*" \
+            --no-cli-pager
+          echo "  ✔  Cache invalidated"
+
+      - name: Deployment summary
+        shell: bash
+        run: |
+          set -euo pipefail
           echo "Deploy complete"
           echo "Image   : ${{ needs.build-scan-push.outputs.image }}"
           echo "Cluster : ${{ env.ECS_CLUSTER }}"
           echo "Region  : ${{ env.AWS_REGION }}"
           echo "Commit  : ${{ github.sha }}"
+
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names "jhbridge-backup-alb" \
+            --query "LoadBalancers[0].DNSName" \
+            --output text 2>/dev/null || echo "")
+          if [[ -n "$ALB_DNS" && "$ALB_DNS" != "None" ]]; then
+            CF_DOMAIN=$(aws cloudfront list-distributions \
+              --query "DistributionList.Items[?Origins.Items[0].DomainName=='${ALB_DNS}'].DomainName | [0]" \
+              --output text 2>/dev/null || echo "")
+            [[ -n "$CF_DOMAIN" && "$CF_DOMAIN" != "None" ]] && echo "CF URL  : https://$CF_DOMAIN"
+          fi

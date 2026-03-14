@@ -1,58 +1,59 @@
 version: "3.9"
 
-# ─────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 # S3 Backup Flow — JHBridge
 #
 # Services:
-#   api      → FastAPI HTTP server (port 8000)
-#   worker   → Celery worker (processes backup tasks)
-#   beat     → Celery Beat scheduler (9h / 21h UTC cron)
+#   api      → FastAPI HTTP server  (port 8000)
+#   worker   → Celery worker        (concurrency=1, max 300MB RAM)
+#   beat     → Celery Beat scheduler (9h / 21h UTC — fires 2×/day only)
 #
 # Redis & all AWS resources are external (Railway / AWS).
-# ─────────────────────────────────────────────────────────────────────────
+# SERVICE env var is read by entrypoint.sh to select which process to start.
+# ─────────────────────────────────────────────────────────────────────────────
 
 x-app-base: &app-base
   build: .
   env_file: .env
   restart: unless-stopped
-  depends_on: []   # no local Redis — it's on Railway
 
 services:
 
-  # ── FastAPI server ───────────────────────────────────────────────────
+  # ── FastAPI server ─────────────────────────────────────────────────────────
   api:
     <<: *app-base
     container_name: s3bf-api
-    command: >
-      uvicorn app.main:app
-        --host 0.0.0.0
-        --port 8000
-        --workers 2
-        --log-level info
+    environment:
+      SERVICE: api
     ports:
       - "8000:8000"
+    mem_limit: 512m
+    memswap_limit: 512m
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 20s
 
-  # ── Celery worker ────────────────────────────────────────────────────
+  # ── Celery worker ──────────────────────────────────────────────────────────
+  # concurrency=1 : one backup at a time (enforced here AND via Redis lock)
+  # mem_limit     : killed by Docker if worker leaks past 400MB
   worker:
     <<: *app-base
     container_name: s3bf-worker
-    command: >
-      celery -A app.worker.celery_app.celery_app worker
-        --loglevel=info
-        --concurrency=2
-        --max-tasks-per-child=50
+    environment:
+      SERVICE: worker
+    mem_limit: 400m
+    memswap_limit: 400m
 
-  # ── Celery Beat (cron scheduler) ─────────────────────────────────────
+  # ── Celery Beat (cron scheduler) ───────────────────────────────────────────
+  # Beat only sends task messages to Redis — it does NOT execute backups.
+  # Kept at 128MB because it does almost nothing between 9h and 21h.
   beat:
     <<: *app-base
     container_name: s3bf-beat
-    command: >
-      celery -A app.worker.celery_app.celery_app beat
-        --loglevel=info
-        --scheduler celery.beat.PersistentScheduler
-        --schedule /tmp/celerybeat-schedule
+    environment:
+      SERVICE: beat
+    mem_limit: 128m
+    memswap_limit: 128m

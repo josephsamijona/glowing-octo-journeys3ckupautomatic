@@ -65,17 +65,17 @@ RUN groupadd --system --gid 1001 appgroup \
     && useradd  --system --uid 1001 --gid 1001 \
                 --no-create-home --shell /sbin/nologin appuser
 
-# Copy only the application source — everything else is excluded via .dockerignore
-COPY --chown=appuser:appgroup app/ ./app/
+# Copy application source and entrypoint script
+COPY --chown=appuser:appgroup app/          ./app/
+COPY --chown=appuser:appgroup entrypoint.sh ./entrypoint.sh
+
+RUN chmod +x ./entrypoint.sh
 
 USER appuser
 
 EXPOSE 8000
 
-# Default entrypoint: FastAPI server.
-# Override CMD in docker-compose for the worker / beat containers.
-CMD ["uvicorn", "app.main:app", \
-     "--host", "0.0.0.0", \
-     "--port", "8000", \
-     "--workers", "2", \
-     "--log-level", "info"]
+# Which service to start — override via -e SERVICE=worker|beat in docker-compose / ECS.
+ENV SERVICE=api
+
+ENTRYPOINT ["./entrypoint.sh"]
