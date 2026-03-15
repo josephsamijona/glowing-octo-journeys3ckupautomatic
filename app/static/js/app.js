@@ -19,6 +19,11 @@ const WS_MAX_RETRIES = 4;
 const HEALTH_INTERVAL  = 30_000;   // 30s
 const HISTORY_INTERVAL = 30_000;   // 30s
 
+// ── Clock state ───────────────────────────────────────────────────────────────
+let _clockInterval = null;
+let _clockSched    = null;
+const CLOCK_CIRC   = 2 * Math.PI * 42;   // r=42 → ≈ 263.9
+
 // ══════════════════════════════════════════════════════════════════════════════
 // Boot
 // ══════════════════════════════════════════════════════════════════════════════
@@ -35,6 +40,83 @@ document.addEventListener('DOMContentLoaded', () => {
   const savedTask = sessionStorage.getItem('active_task_id');
   if (savedTask) connectWebSocket(savedTask);
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Clock — live countdown to next scheduled backup
+// ══════════════════════════════════════════════════════════════════════════════
+function startClock(sched) {
+  _clockSched = sched;
+  if (_clockInterval) clearInterval(_clockInterval);
+  _clockInterval = setInterval(tickClock, 1000);
+  tickClock();
+}
+
+function tickClock() {
+  if (!_clockSched) return;
+
+  const now = new Date();
+  const mh = _clockSched.morning_hour,   mm = _clockSched.morning_minute;
+  const eh = _clockSched.evening_hour,   em = _clockSched.evening_minute;
+
+  // Build candidates (today + tomorrow morning) to always find a future slot
+  const d = now;
+  const slots = [
+    { t: new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), mh, mm)), label: 'Matin',  key:'morning' },
+    { t: new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), eh, em)), label: 'Soir',   key:'evening' },
+    { t: new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()+1, mh, mm)), label: 'Matin', key:'morning' },
+  ];
+
+  // Dot labels for the two daily slots
+  document.getElementById('lbl-morning').textContent =
+    `Matin ${String(mh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+  document.getElementById('lbl-evening').textContent =
+    `Soir ${String(eh).padStart(2,'0')}:${String(em).padStart(2,'0')}`;
+
+  const future = slots.filter(s => s.t > now).sort((a,b) => a.t - b.t);
+  if (!future.length) return;
+
+  const next   = future[0];
+  const diff   = next.t - now;           // ms until next backup
+  const isOver = diff < 0;
+
+  // Previous slot = last one that is NOT future
+  const past   = slots.filter(s => s.t <= now).sort((a,b) => b.t - a.t);
+  const prev   = past[0];
+  const window = prev ? (next.t - prev.t) : (12 * 3600 * 1000);
+  const elapsed = window - diff;
+  const pct    = Math.max(0, Math.min(1, elapsed / window));
+  const offset = CLOCK_CIRC * (1 - pct);
+
+  // Update arc
+  const arc = document.getElementById('clock-arc');
+  arc.style.strokeDashoffset = offset;
+  arc.classList.remove('clock-arc-warn', 'clock-arc-over');
+  if (isOver)      arc.classList.add('clock-arc-over');
+  else if (pct > 0.85) arc.classList.add('clock-arc-warn');
+
+  // Countdown display
+  const absDiff = Math.abs(diff);
+  const h = Math.floor(absDiff / 3600000);
+  const m = Math.floor((absDiff % 3600000) / 60000);
+  const s = Math.floor((absDiff % 60000) / 1000);
+  const hm = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  const ss = String(s).padStart(2,'0');
+
+  document.getElementById('clock-hm').textContent    = hm;
+  document.getElementById('clock-s').textContent     = ss + 's';
+  document.getElementById('clock-label').textContent = next.label;
+  document.getElementById('clock-state').textContent = isOver ? 'En attente...' : 'avant backup';
+
+  // Highlight active slot dot
+  ['morning','evening'].forEach(k => {
+    const dot = document.getElementById(`dot-${k}`);
+    dot.className = `w-2 h-2 rounded-full inline-block ${next.key === k ? 'bg-green-dark' : 'bg-gray-200'}`;
+  });
+
+  // Update stat-next card too
+  document.getElementById('stat-next').textContent =
+    `${next.label} · ${hm}:${ss}`;
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Health check
@@ -230,18 +312,8 @@ async function loadHistory() {
     const data  = await apiFetch('/api/v1/backups/history?limit=50');
     renderHistory(data.tasks || []);
 
-    const sched      = await apiFetch('/api/v1/settings/schedule');
-    const now        = new Date();
-    const candidates = [
-      new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(),
-        sched.morning_hour, sched.morning_minute)),
-      new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(),
-        sched.evening_hour, sched.evening_minute)),
-    ].filter(d => d > now).sort((a, b) => a - b);
-
-    document.getElementById('stat-next').textContent = candidates.length
-      ? candidates[0].toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' UTC'
-      : 'Demain';
+    const sched = await apiFetch('/api/v1/settings/schedule');
+    startClock(sched);
   } catch (_) { /* silent */ }
 }
 
@@ -314,10 +386,11 @@ async function saveSchedule() {
   };
 
   try {
-    await apiFetch('/api/v1/settings/schedule', {
+    const saved = await apiFetch('/api/v1/settings/schedule', {
       method: 'PUT',
       body: JSON.stringify(body),
     });
+    startClock(saved);   // restart clock with new times
     const msg = document.getElementById('schedule-msg');
     msg.classList.remove('hidden');
     setTimeout(() => msg.classList.add('hidden'), 3000);

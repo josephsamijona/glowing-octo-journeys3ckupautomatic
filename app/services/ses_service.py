@@ -90,6 +90,89 @@ def _fmt_size(b: int) -> str:
     return f"{b/1_073_741_824:.2f} GB"
 
 
+_MISSED_TEMPLATE = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  body {{ margin:0; padding:20px; background:#F7FAFC;
+         font-family:Inter,Roboto,sans-serif; }}
+  .wrap {{ max-width:600px; margin:0 auto; }}
+  .hd   {{ background:#744210; color:#fff; padding:32px 28px;
+           border-radius:12px 12px 0 0; }}
+  .hd h1{{ margin:0; font-size:22px; letter-spacing:.5px; }}
+  .hd p {{ margin:6px 0 0; font-size:13px; opacity:.75; }}
+  .bd   {{ background:#fff; padding:28px;
+           border-radius:0 0 12px 12px;
+           box-shadow:0 4px 16px rgba(0,0,0,.08); }}
+  .badge{{ display:inline-block; padding:6px 18px; border-radius:20px;
+           font-weight:700; font-size:13px;
+           background:#FEFCBF; color:#744210; }}
+  table {{ width:100%; border-collapse:collapse; margin-top:16px; }}
+  td    {{ padding:10px 0; border-bottom:1px solid #EDF2F7;
+           font-size:13px; color:#4A5568; }}
+  td:last-child{{ font-weight:600; color:#1A202C; text-align:right; }}
+  .warn {{ background:#FFFBEB; border-left:4px solid #F6AD55;
+           padding:14px; margin-top:16px; border-radius:4px;
+           font-size:13px; color:#744210; }}
+  .ft   {{ text-align:center; margin-top:20px; color:#A0AEC0;
+           font-size:11px; }}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hd">
+    <h1>JHBridge &mdash; Backup Manqué</h1>
+    <p>Alerte : un backup planifié n'a pas été exécuté</p>
+  </div>
+  <div class="bd">
+    <div style="text-align:center;margin:18px 0;">
+      <span class="badge">⚠ BACKUP MANQUÉ</span>
+    </div>
+    <table>
+      <tr><td>Slot planifié</td>   <td>{slot_label}</td></tr>
+      <tr><td>Heure prévue</td>    <td>{scheduled_time}</td></tr>
+      <tr><td>Détecté à</td>       <td>{detected_at}</td></tr>
+    </table>
+    <div class="warn">
+      <strong>Action requise :</strong> Aucun backup COMPLETED n'a été trouvé
+      dans les 10 minutes suivant l'heure planifiée. Vérifiez que le service
+      worker Celery est bien en cours d'exécution sur Railway.
+    </div>
+  </div>
+  <div class="ft">
+    JHBridge Translation Services &bull; Automated Backup System<br>
+    This is an automated message &mdash; please do not reply.
+  </div>
+</div>
+</body>
+</html>
+"""
+
+
+def send_missed_backup_alert(to_email: str, scheduled_time: str, label: str) -> bool:
+    """Send an alert email when a scheduled backup slot was missed."""
+    try:
+        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        html = _MISSED_TEMPLATE.format(
+            slot_label=label,
+            scheduled_time=scheduled_time,
+            detected_at=now_utc,
+        )
+        recipients = [e.strip() for e in to_email.split(",") if e.strip()]
+        resend.Emails.send({
+            "from": settings.email_from,
+            "to": recipients,
+            "subject": f"[JHBridge] ⚠ Backup Manqué — {label} {scheduled_time}",
+            "html": html,
+        })
+        return True
+    except Exception as exc:
+        print(f"[ses_service] Missed backup alert failed: {exc}")
+        return False
+
+
 def send_backup_report(
     to_email: str,
     task_id: str,

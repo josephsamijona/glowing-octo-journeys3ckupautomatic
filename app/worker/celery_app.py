@@ -56,5 +56,10 @@ celery_app.conf.update(
             "schedule": crontab(hour=21, minute=0),
             "kwargs": {"triggered_by": "SYSTEM"},
         },
+        # Watchdog: detect missed backup slots every 5 minutes
+        "missed-backup-watchdog": {
+            "task": "check_missed_backup",
+            "schedule": crontab(minute="*/5"),
+        },
     },
 )

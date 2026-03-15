@@ -50,6 +50,18 @@
     .badge-FAILED    { background:#FED7D7; color:#742A2A; }
     .badge-RUNNING   { background:#BEE3F8; color:#2A4365; }
     .badge-PENDING   { background:#FEFCBF; color:#744210; }
+
+    /* Clock arc */
+    .clock-bg  { fill:none; stroke:#EDF2F7; }
+    .clock-arc {
+      fill:none; stroke:#68D391; stroke-linecap:round;
+      transition:stroke-dashoffset 1s linear;
+      transform:rotate(-90deg); transform-origin:50% 50%;
+    }
+    .clock-arc-warn { stroke:#F6AD55; }
+    .clock-arc-over { stroke:#FC8181; }
+    @keyframes tick-pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
+    .clock-colon { animation:tick-pulse 1s step-start infinite; }
   </style>
 </head>
 <body class="min-h-screen">
@@ -246,6 +258,45 @@
 
     <!-- RIGHT: Schedule + API Info -->
     <div class="space-y-6">
+
+      <!-- Clock Widget -->
+      <div class="bg-white rounded-xl shadow-sm p-6">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-navy font-semibold text-base">Prochain Backup</h2>
+          <span id="clock-label" class="text-xs font-semibold px-3 py-1 rounded-full bg-green/20 text-green-dark">—</span>
+        </div>
+
+        <!-- SVG arc countdown -->
+        <div class="flex flex-col items-center gap-3">
+          <div class="relative" style="width:160px;height:160px">
+            <svg viewBox="0 0 100 100" width="160" height="160">
+              <circle class="clock-bg" cx="50" cy="50" r="42" stroke-width="7"/>
+              <circle id="clock-arc" class="clock-arc" cx="50" cy="50" r="42"
+                stroke-width="7"
+                stroke-dasharray="263.9"
+                stroke-dashoffset="0"/>
+            </svg>
+            <!-- Center text -->
+            <div class="absolute inset-0 flex flex-col items-center justify-center">
+              <span id="clock-hm" class="text-navy font-bold text-xl leading-none tracking-tight">--:--</span>
+              <span id="clock-s"  class="text-gray-400 text-xs font-mono mt-0.5">--</span>
+              <span id="clock-state" class="text-gray-400 text-xs mt-1 text-center px-1">UTC</span>
+            </div>
+          </div>
+
+          <!-- Two slots indicators -->
+          <div class="flex gap-3 w-full justify-center text-xs">
+            <div class="flex items-center gap-1.5">
+              <span id="dot-morning" class="w-2 h-2 rounded-full bg-gray-300 inline-block"></span>
+              <span id="lbl-morning" class="text-gray-500">Matin —</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span id="dot-evening" class="w-2 h-2 rounded-full bg-gray-300 inline-block"></span>
+              <span id="lbl-evening" class="text-gray-500">Soir —</span>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <!-- Schedule Card -->
       <div class="bg-white rounded-xl shadow-sm p-6">

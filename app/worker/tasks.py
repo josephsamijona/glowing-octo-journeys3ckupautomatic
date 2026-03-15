@@ -1,8 +1,9 @@
 """Celery tasks for the backup pipeline."""
+import json
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import redis
 
@@ -162,3 +163,53 @@ def run_backup_process(
         if r.get(_LOCK_KEY) == task_id:
             r.delete(_LOCK_KEY)
             log.info("[lock] Released global backup lock (task=%s)", task_id)
+
+
+# ---------------------------------------------------------------------------
+# Missed backup watchdog
+# ---------------------------------------------------------------------------
+
+@celery_app.task(name="check_missed_backup")
+def check_missed_backup():
+    """
+    Runs every 5 minutes via beat.
+    If a scheduled slot just passed (within 10-min grace window) and no
+    COMPLETED backup exists since that slot, send an alert email.
+    """
+    r = _redis()
+    raw = r.get("backup:schedule")
+    sched = json.loads(raw) if raw else {}
+
+    morning_h = int(sched.get("morning_hour",   9))
+    morning_m = int(sched.get("morning_minute",  0))
+    evening_h = int(sched.get("evening_hour",   21))
+    evening_m = int(sched.get("evening_minute",  0))
+
+    now = datetime.now(timezone.utc)
+    GRACE = timedelta(minutes=10)
+
+    slots = [
+        (now.replace(hour=morning_h, minute=morning_m, second=0, microsecond=0), "Backup Matin"),
+        (now.replace(hour=evening_h, minute=evening_m, second=0, microsecond=0), "Backup Soir"),
+    ]
+
+    for slot_time, label in slots:
+        elapsed = now - slot_time
+        if timedelta(0) <= elapsed <= GRACE:
+            # This slot just passed — check if a backup actually ran
+            tasks = db_service.list_tasks(limit=20)
+            recent_ok = any(
+                t.get("status") == "COMPLETED"
+                and t.get("timestamp", "") >= slot_time.isoformat()
+                for t in tasks
+            )
+            if not recent_ok:
+                alert_key = f"backup:missed_alert:{now.strftime('%Y%m%d')}:{label}"
+                if not r.get(alert_key):
+                    r.set(alert_key, "1", ex=3600)   # prevent re-alert for 1h
+                    log.warning("[watchdog] Missed backup slot: %s at %s", label, slot_time)
+                    ses_service.send_missed_backup_alert(
+                        to_email=settings.admin_email,
+                        scheduled_time=slot_time.strftime("%H:%M UTC"),
+                        label=label,
+                    )
