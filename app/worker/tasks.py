@@ -67,11 +67,11 @@ def run_backup_process(
         )
         return {"status": "SKIPPED", "task_id": task_id, "reason": "backup_in_progress"}
 
-    # Ensure DB record exists
-    if not db_service.get_task(task_id):
-        db_service.create_task(task_id, triggered_by=triggered_by, db_url=db_url)
-
     try:
+        # Ensure DB record exists
+        if not db_service.get_task(task_id):
+            db_service.create_task(task_id, triggered_by=triggered_by, db_url=db_url)
+
         # ── Phase 1: RUNNING ─────────────────────────────────────────────
         db_service.update_task(task_id, status="RUNNING", phase="Initialisation...")
         _set_progress(r, task_id, 5, "Initialisation...")

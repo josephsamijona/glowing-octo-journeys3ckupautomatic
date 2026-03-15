@@ -19,7 +19,7 @@ def _get_table():
         aws_access_key_id=settings.aws_access_key_id,
         aws_secret_access_key=settings.aws_secret_access_key,
     )
-    return dynamodb.Table(settings.dynamodbtable)
+    return dynamodb.Table(settings.DYNAMODBTABLE)
 
 
 def _mask_db_url(db_url: str) -> str:
